@@ -1,0 +1,46 @@
+repositories:
+- name: ethereum-helm-charts
+  url: https://ethpandaops.github.io/ethereum-helm-charts
+
+
+releases:
+- name: eth-genesis
+  chart: ethereum-helm-charts/genesis-generator
+  version: 0.2.1
+  values: 
+  - eth-genesis-generator-capella.yaml
+
+- name: node000 #bootnode
+  chart: ethereum-helm-charts/ethereum-node
+  version: 0.0.7
+  values:
+  - node000.yaml
+  needs:
+  - eth-genesis
+
+- name: node001 #bootnode
+  chart: ethereum-helm-charts/ethereum-node
+  version: 0.0.7
+  values:
+  - node001.yaml
+  needs:
+  - eth-genesis
+
+- name: node002 #bootnode
+  chart: ethereum-helm-charts/ethereum-node
+  version: 0.0.7
+  values:
+  - node002.yaml
+  needs:
+  - eth-genesis
+
+
+- name: validator0
+  chart: ethereum-helm-charts/lodestar
+  version: 1.0.5
+  values:
+  - validator0.yaml
+  needs:
+  - node000
+  - node001
+  - node002

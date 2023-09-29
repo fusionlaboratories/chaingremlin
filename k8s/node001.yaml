@@ -1,0 +1,166 @@
+global:
+  main:
+    network: 4844-custom_config_data
+    engineEndpoint: http://{{ .Release.Name }}-execution:8551
+    rpcEndpoint: http://{{ .Release.Name }}-execution:8545
+    beaconEndpoint: http://{{ .Release.Name }}-beacon:5052
+  checkpointSync:
+    enabled: false
+
+nethermind:
+  serviceMonitor:
+      enabled: false
+  fullnameOverride: exec-001
+  enabled: true
+  image:
+    repository: nethermind/nethermind
+    tag: latest
+  p2pNodePort:
+    enabled: false
+  persistence:
+    enabled: false
+    size: 50Gi
+  imagePullSecrets:
+  - name: regcred
+  podLabels:
+    network: custom_devnet
+    node_id: '1'
+    ethereum_role: execution
+    consensus_client: lodestar
+    execution_client: nethermind
+    ethereum_instance: nethermind-lodestar-001
+  resources:
+    limits:
+      cpu: 3000m
+      memory: 7Gi
+  jwt: ecb22bc24e7d4061f7ed690ccd5846d7d73f5d2b9733267e12f56790398d908a
+  extraArgs:
+    - --Discovery.Bootnodes=$(cat /data/bootnodes.txt)
+    - --Init.ChainSpecPath=/data/genesis.json
+    - --config=none.cfg
+    - --Init.IsMining=false
+    - --Pruning.Mode=None
+    - --JsonRpc.EnabledModules=Eth,Subscribe,Trace,TxPool,Web3,Personal,Proof,Net,Parity,Health,Rpc,Debug,Admin,Engine
+    - --EthStats.Enabled=false
+    - --log=DEBUG
+  initContainers:
+  - name: init-genesis
+    image: alpine:latest
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      runAsNonRoot: false
+      runAsUser: 0
+    command:
+      - sh
+      - -ace
+      - >
+        GENESIS_URI=http://eth-genesis.default.svc.cluster.local:8000/custom_config_data/chainspec.json;
+        TRUSTED_SETUP_URI=http://eth-genesis.default.svc.cluster.local:8000/custom_config_data/trusted_setup.txt;
+        if ! [ -f /data/genesis_init_done ];
+        then
+          wget -O /data/genesis.json $GENESIS_URI;
+          wget -O /data/trusted_setup.txt $TRUSTED_SETUP_URI;
+          apk update && apk add jq;
+          cat /data/genesis.json | jq -r '.config.chainId' > /data/chainid.txt;
+          while ! wget -T 5 -c http://exec-000-headless.default.svc.cluster.local:8545/; do sleep 10; done;
+          wget --header="Content-Type: application/json" --post-data='{"method":"net_localEnode","params":[],"id":1,"jsonrpc":"2.0"}' -O- http://exec-000-headless.default.svc.cluster.local:8545 |jq -r '.result' > /data/bootnodes.txt
+          touch /data/genesis_init_done;
+
+          echo "genesis init done";
+        else
+          echo "genesis is already initialized";
+        fi;
+    volumeMounts:
+      - name: storage
+        mountPath: "/data"
+
+lodestar:
+  fullnameOverride: beacon-001
+  enabled: true
+  image:
+    repository: chainsafe/lodestar
+    tag: latest
+    pullPolicy: Always
+  mode: "beacon"
+  securityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+  podLabels:
+    network: custom_devnet
+    node_id: '1'
+    ethereum_role: consensus
+    consensus_client: lodestar
+    execution_client: nethermind
+    ethereum_instance: nethermind-lodestar-001
+  resources:
+    limits:
+      cpu: 3000m
+      memory: 7Gi
+  p2pNodePort:
+    enabled: false
+    startsAt: 31004
+  jwt: ecb22bc24e7d4061f7ed690ccd5846d7d73f5d2b9733267e12f56790398d908a
+  persistence:
+    enabled: false
+    size: 50Gi
+  # extraEnv: 
+  #   - name: DEBUG
+  #     value: discv5:service,discv5:sessionService
+  extraArgs:
+    - --execution.urls=http://exec-001-headless.default.svc.cluster.local:8551
+    - --genesisStateFile=/data/testnet_spec/genesis.ssz
+    - --paramsFile=/data/testnet_spec/config.yaml
+    - --bootnodes=$(cat /data/testnet_spec/bootstrap_nodes.txt)
+    - --logLevel=debug
+    - --discv5
+    - --network.connectToDiscv5Bootnodes true
+    - --eth1
+    - --targetPeers 2
+    - --metrics=true 
+  imagePullSecrets:
+  - name: regcred
+  initContainers:
+  - name: init-genesis
+    image: alpine:latest
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      runAsNonRoot: false
+      runAsUser: 0
+    command:
+      - sh
+      - -ace
+      - >
+        while ! wget -T 5 -c http://eth-genesis.default.svc.cluster.local:8000/; do sleep 5; done;
+        DEPOSIT_CONTRACT_URI=http://eth-genesis.default.svc.cluster.local:8000/custom_config_data/deposit_contract.txt;
+        DEPOSIT_CONTRACT_BLOCK_URI=http://eth-genesis.default.svc.cluster.local:8000/custom_config_data/deposit_contract_block.txt;
+        DEPLOY_BLOCK_URI=http://eth-genesis.default.svc.cluster.local:8000/custom_config_data/deploy_block.txt;
+        GENESIS_CONFIG_URI=http://eth-genesis.default.svc.cluster.local:8000/custom_config_data/config.yaml;
+        GENESIS_SSZ_URI=http://eth-genesis.default.svc.cluster.local:8000/custom_config_data/genesis.ssz;
+        BOOTNODE_URI=http://lighthouse-bootnode-0.lighthouse-bootnode-headless.default.svc.cluster.local:8888/enr;
+        TRUSTED_SETUP_URI=http://eth-genesis.default.svc.cluster.local:8000/custom_config_data/trusted_setup.txt;
+        mkdir -p /data/testnet_spec;
+        apk update && apk add jq;
+      
+        if ! [ -f /data/testnet_spec/genesis.ssz ];
+        then
+          wget -O /data/testnet_spec/deposit_contract.txt $DEPOSIT_CONTRACT_URI;
+          wget -O /data/testnet_spec/deposit_contract_block.txt $DEPOSIT_CONTRACT_BLOCK_URI;
+          wget -O /data/testnet_spec/deploy_block.txt $DEPLOY_BLOCK_URI;
+          wget -O /data/testnet_spec/config.yaml $GENESIS_CONFIG_URI;
+          wget -O /data/testnet_spec/genesis.ssz $GENESIS_SSZ_URI;
+          #wget -O /data/testnet_spec/bootstrap_nodes.txt $BOOTNODE_URI;
+
+          while ! wget -T 5 -c http://beacon-000-headless.default.svc.cluster.local:5052/eth/v1/node/identity; do sleep 10; done;
+          wget -O- http://beacon-000-headless.default.svc.cluster.local:5052/eth/v1/node/identity | jq -r '.data.enr' >> /data/testnet_spec/bootstrap_nodes.txt;
+          cat /data/testnet_spec/bootstrap_nodes.txt
+
+          wget -O /data/testnet_spec/trusted_setup.txt $TRUSTED_SETUP_URI;
+          echo "genesis init done";
+        else
+          echo "genesis exists. skipping...";
+        fi;
+    volumeMounts:
+      - name: storage
+        mountPath: "/data"   
+  serviceMonitor:
+    enabled: false
